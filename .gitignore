@@ -1,0 +1,15 @@
+# Python caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Project specific data
+*.db
+models/
+*.gguf
+server_state.json
