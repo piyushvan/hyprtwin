@@ -1,3 +1,4 @@
+import json
 import sys
 from pathlib import Path
 from typing import List, Optional
@@ -12,12 +13,14 @@ from hyprtwin.system.hardware import (
     calculate_safe_context,
     get_cpu_model,
     get_gpu_status,
-    get_system_ram_mb,
+    get_system_ram_info,
 )
 
 app = typer.Typer(
     no_args_is_help=True, help="Twin: Maximized for 4GB VRAM. Strictly Linux Native."
 )
+
+PROFILE_FILE = Path("~/.local/share/twin/profile.json").expanduser()
 
 
 @app.command()
@@ -45,9 +48,11 @@ def init():
 @app.command()
 def scan():
     """Run a bare-metal telemetry scan (Shows real-time VRAM, CPU)."""
-    print("=== 🚀 HYPRTWIN V3.0: BARE-METAL TELEMETRY ===")
+    print("=== 🚀 HYPRTWIN V3.1: BARE-METAL TELEMETRY ===")
     print(f"[+] CPU Model: {get_cpu_model()}")
-    print(f"[+] System RAM: {get_system_ram_mb()} MB")
+    ram = get_system_ram_info()
+    print(f"[+] System RAM (Total): {ram['total_mb']} MB")
+    print(f"[*] System RAM (Free):  {ram['free_mb']} MB")
     gpu = get_gpu_status()
     print(f"[+] GPU Type: {gpu['type']}")
     print(f"[+] GPU Total VRAM: {gpu['total_vram_mb']} MB")
@@ -57,7 +62,7 @@ def scan():
 
 @app.command()
 def build():
-    """Profiles hardware and builds your custom system-aware agent."""
+    """Profiles hardware, builds the agent, and caches the safe profile."""
     config = get_config()
     model_paths = config.get("model_paths", [])
 
@@ -98,31 +103,82 @@ def build():
         print("❌ ERROR: Not enough free VRAM to boot this model safely.")
         raise typer.Exit(1)
 
-    # 4. Context Window Selection (Power of 2 Filter)
+    # 4. Context Window Selection
     master_powers = [1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072]
-
-    # Only keep the powers of 2 that are less than or equal to your max calculated tokens
     valid_choices = [str(p) for p in master_powers if p <= safe_data["max_tokens"]]
 
     if not valid_choices:
-        valid_choices = [str(safe_data["max_tokens"])]  # Failsafe
+        valid_choices = [str(safe_data["max_tokens"])]
 
     ctx_str = questionary.select(
         "📏 Select Context Window Size (Strict Powers of 2):",
         choices=valid_choices,
-        default=valid_choices[-1],  # Defaults to the largest safe option
+        default=valid_choices[-1],
     ).ask()
 
     if not ctx_str:
         raise typer.Exit()
 
-    # 5. Boot the Server
+    # 5. Boot & Save Profile
     confirm = questionary.confirm(
         "🚀 Boot the bare-metal socket with these parameters?"
     ).ask()
+
     if confirm:
+        # Save the successful profile
+        profile_data = {
+            "model_name": selected_file.name,
+            "model_path": str(selected_file.resolve()),
+            "context_size": int(ctx_str),
+            "vram_required_mb": model_size_mb,
+        }
+        PROFILE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(PROFILE_FILE, "w") as f:
+            json.dump(profile_data, f, indent=4)
+
         kill_server()
-        boot_server(model_path=str(selected_file.resolve()), context_size=int(ctx_str))
+        boot_server(
+            model_path=profile_data["model_path"],
+            context_size=profile_data["context_size"],
+        )
+
+
+@app.command()
+def up():
+    """Fast-boots the server using the last known safe hardware profile."""
+    if not PROFILE_FILE.exists():
+        print(
+            "[-] No hardware profile found. Run 'twin build' first to profile your system."
+        )
+        raise typer.Exit(1)
+
+    with open(PROFILE_FILE, "r") as f:
+        profile = json.load(f)
+
+    gpu = get_gpu_status()
+    ram = get_system_ram_info()
+    free_memory = (
+        gpu["free_vram_mb"] if gpu["type"] in ["NVIDIA", "AMD"] else ram["free_mb"]
+    )
+
+    required_mb = profile["vram_required_mb"] + 200  # 200MB safety buffer
+
+    print("⚡ HYPRTWIN FAST-BOOT")
+    print(f"[*] Target Model: {profile['model_name']}")
+    print(f"[*] Required VRAM: ~{required_mb} MB")
+    print(f"[*] Available VRAM: {free_memory} MB")
+
+    if free_memory >= required_mb:
+        print("[+] VRAM check passed. Bypassing menus...")
+        kill_server()
+        boot_server(
+            model_path=profile["model_path"], context_size=profile["context_size"]
+        )
+    else:
+        print(
+            "❌ ERROR: VRAM too low for cached profile. Close some apps or run 'twin build'."
+        )
+        raise typer.Exit(1)
 
 
 @app.command()
@@ -133,7 +189,6 @@ def down():
 
 @app.command()
 def ask(
-    # Tell Typer to accept multiple words as a list
     query: Optional[List[str]] = typer.Argument(
         None, help="The question you want to ask the agent."
     ),
@@ -151,7 +206,6 @@ def ask(
         if not query:
             return
 
-    # The Fix: Stitch the unquoted words together with spaces
     query_str = " ".join(query) if query else ""
 
     piped_data = None
