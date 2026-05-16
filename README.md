@@ -1,9 +1,3 @@
-Here is the exact, raw text for the README.md. I have removed the outer formatting boxes so the UI renderer won't break it.
-
-You can select and copy everything from the `# 🚀 HyprTwin V3.0` line down to the bottom:
-
----
-
 # 🚀 HyprTwin V3.0
 
 A bare-metal, mathematically-governed local AI wrapper built specifically for Linux laptops with strict 4GB VRAM limits.
