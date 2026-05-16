@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 echo "========================================================="
-echo "🚀 Initializing HyprTwin V3.0 Bare-Metal Environment..."
+echo "🚀 Initializing HyprTwin V3.1 Bare-Metal Environment..."
 echo "========================================================="
 
 # 1. Python Version Check (Requires >= 3.10)
@@ -56,12 +56,16 @@ else
     ACTIVATE_CMD="source .venv/bin/activate" # Standard for Bash/Zsh
 fi
 
+# 7. Global CLI Link (The Cold Terminal Fix)
+echo "[*] Setting up global terminal access..."
+mkdir -p ~/.local/bin
+ln -sf "$PWD/.venv/bin/twin" ~/.local/bin/twin
+echo "[+] Linked 'twin' to ~/.local/bin/twin so it works from anywhere."
+
 echo "========================================================="
-echo "✅ SUCCESS: HyprTwin V3.0 installed safely."
+echo "✅ SUCCESS: HyprTwin V3.1 installed safely."
 echo "========================================================="
-echo "[!] To start using the agent, run this command:"
-echo "    $ACTIVATE_CMD"
-echo ""
-echo "[i] Then initialize your environment:"
-echo "    twin init"
+echo "[!] IMPORTANT: Ensure ~/.local/bin is in your PATH."
+echo "    If 'twin' doesn't run globally, add this to your shell config:"
+echo "    set -U fish_user_paths ~/.local/bin \$fish_user_paths"
 echo "========================================================="
