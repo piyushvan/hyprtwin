@@ -1,15 +1,33 @@
+Here is the exact, raw text for the README.md. I have removed the outer formatting boxes so the UI renderer won't break it.
+
+You can select and copy everything from the `# 🚀 HyprTwin V3.0` line down to the bottom:
+
+---
+
 # 🚀 HyprTwin V3.0
 
-A bare-metal, mathematically-governed local AI built specifically for Linux laptops with strict 4GB VRAM limits (like the RTX 3050).
+A bare-metal, mathematically-governed local AI wrapper built specifically for Linux laptops with strict 4GB VRAM limits.
 
 HyprTwin intercepts your terminal pipes, profiles your hardware in real-time, calculates exact KV Cache and Compute Buffer constraints, and safely boots a local AI socket without ever hitting a "CUDA Out of Memory" crash.
+
+## ⚠️ A Note on Stability (Why I Built This)
+
+I built this personal project because manually configuring `llama.cpp` parameters to fit inside a 4GB VRAM laptop without crashing was incredibly frustrating. I am not a professional systems engineer; I just wanted a tool that did the VRAM math for me.
+
+**This project was built and tested explicitly on my personal environment:**
+
+* **OS:** CachyOS (Arch Linux)
+* **GPU:** NVIDIA GeForce RTX 3050 Laptop GPU (4GB VRAM)
+* **Shell:** Fish
+
+While the Python engine is designed to be adaptable and *should* work on other Linux distros and shells (Bash/Zsh), I cannot guarantee it will work flawlessly everywhere. I am open-sourcing it in hopes it helps someone else struggling with a low-VRAM machine!
 
 ## 🧠 Under the Hood
 
 * **Engine:** Powered by the [llama.cpp TurboQuant fork](https://github.com/ggerganov/llama.cpp) (using `--cache-type-k turbo4` and Flash Attention).
 * **Recommended Model:** `Qwen2.5-Coder-3B-Instruct` (Q8 or Q5_K_M).
 * **Memory:** Features a local SQLite memory database to remember terminal context between commands.
-* **Shell Agnostic:** Works flawlessly on Fish.
+* **Shell Support:** Built natively for Fish, but the Python backend is fully compatible with Bash and Zsh.
 
 ## ⚡ Core Commands (The CLI)
 
