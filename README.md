@@ -48,7 +48,7 @@ HyprTwin is controlled entirely through the `twin` command.
 Clone the repository and run the automated installer:
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/hyprtwin.git
+git clone https://github.com/piyushvan/hyprtwin.git
 cd hyprtwin
 chmod +x scripts/install.sh
 ./scripts/install.sh
