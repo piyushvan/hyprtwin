@@ -46,6 +46,10 @@ def boot_server(model_path: str, context_size: int):
         str(context_size),
         "-ngl",
         "99",
+        "-b",
+        "512",  # Restricts compute buffer
+        "--flash-attn",
+        "on",  # Correct syntax for the TurboQuant fork
         "--cache-type-k",
         "turbo4",
         "--cache-type-v",

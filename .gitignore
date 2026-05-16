@@ -1,15 +1,25 @@
-# Python caches
-__pycache__/
-*.py[cod]
-*$py.class
-
-# Virtual environments
+# Python Environments
 .venv/
-venv/
-ENV/
+env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+build/
+dist/
 
-# Project specific data
+# Local Memory & Logs
+*.log
 *.db
-models/
+history.db
+llm_hardware_profile.json
+
+# OS / Editor Files
+.DS_Store
+.vscode/
+.idea/
+
+# Models (Never upload these to GitHub)
 *.gguf
-server_state.json
+*.bin

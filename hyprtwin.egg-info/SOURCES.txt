@@ -13,6 +13,7 @@ hyprtwin/api/client.py
 hyprtwin/core/__init__.py
 hyprtwin/core/engine.py
 hyprtwin/system/__init__.py
+hyprtwin/system/config.py
 hyprtwin/system/hardware.py
 hyprtwin/tools/__init__.py
 hyprtwin/tools/execution.py
