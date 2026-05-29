@@ -8,7 +8,7 @@ import typer
 
 from hyprtwin.api.client import ask_server, clear_history
 from hyprtwin.core.engine import boot_server, kill_server
-from hyprtwin.system.config import get_config, save_config
+from hyprtwin.system.config import auto_discover, get_config, save_config
 from hyprtwin.system.hardware import (
     calculate_safe_context,
     get_cpu_model,
@@ -25,24 +25,40 @@ PROFILE_FILE = Path("~/.local/share/twin/profile.json").expanduser()
 
 @app.command()
 def init():
-    """Initial setup to link your binaries and model folders."""
+    """Smart setup to discover your binaries and model folders."""
     config = get_config()
-    print("🛠️  HyprTwin First-Run Setup")
+    print("🛠️  HyprTwin Environment Setup")
 
-    bin_path = questionary.path(
-        "Where is your llama.cpp 'bin' folder? (Contains llama-server)",
-        default=config.get("bin_path", ""),
+    # 1. Discover Binaries
+    potential_bins = auto_discover(subdir="build/bin")
+    bin_choice = questionary.select(
+        "Select your llama.cpp 'bin' folder (or choose 'Manual'):",
+        choices=potential_bins + ["Manual Entry"],
     ).ask()
-    model_path = questionary.path(
-        "Add a directory to search for .gguf models:", default=config["model_paths"][0]
+
+    if bin_choice == "Manual Entry":
+        bin_path = questionary.path("Enter binary path:").ask()
+    else:
+        bin_path = bin_choice
+
+    # 2. Discover Models
+    potential_models = auto_discover()
+    model_choice = questionary.select(
+        "Select your model directory (or choose 'Manual'):",
+        choices=potential_models + ["Manual Entry"],
     ).ask()
 
-    config["bin_path"] = bin_path
-    if model_path not in config["model_paths"]:
-        config["model_paths"].append(model_path)
+    if model_choice == "Manual Entry":
+        model_path = questionary.path("Enter model path:").ask()
+    else:
+        model_path = model_choice
 
+    # 3. Save
+    config["bin_path"] = str(Path(bin_path).resolve())
+    config["model_paths"] = [str(Path(model_path).resolve())]
     save_config(config)
-    print("\n✅ Configuration saved to ~/.config/twin/config.json")
+
+    print("\n✅ Setup complete. Paths validated.")
 
 
 @app.command()
@@ -124,7 +140,7 @@ def build():
     ).ask()
 
     if confirm:
-        # Save the successful profile
+        # Save the successful profile (FIXED DICTIONARY)
         profile_data = {
             "model_name": selected_file.name,
             "model_path": str(selected_file.resolve()),
@@ -135,11 +151,20 @@ def build():
         with open(PROFILE_FILE, "w") as f:
             json.dump(profile_data, f, indent=4)
 
-        kill_server()
-        boot_server(
-            model_path=profile_data["model_path"],
-            context_size=profile_data["context_size"],
-        )
+            kill_server()
+            boot_server(
+                model_path=profile_data["model_path"],
+                context_size=profile_data["context_size"],
+            )
+
+            # ---------------------------------------------------------
+            # NEW: The "Systems Online" Handshake
+            # ---------------------------------------------------------
+            print("\n[+] Triggering systems check...")
+            ask_server(
+                "You are HyprTwin. You just booted into bare-metal memory successfully. Say a very short, cool 'system online' greeting to the user.",
+                quick=True,
+            )
 
 
 @app.command()
@@ -151,8 +176,14 @@ def up():
         )
         raise typer.Exit(1)
 
-    with open(PROFILE_FILE, "r") as f:
-        profile = json.load(f)
+    try:
+        with open(PROFILE_FILE, "r") as f:
+            profile = json.load(f)
+    except json.JSONDecodeError:
+        # FIX: Gracefully handle corrupted config files
+        print("❌ ERROR: Hardware profile is corrupted or unreadable.")
+        print("[!] Please run 'twin build' to generate a fresh, safe profile.")
+        raise typer.Exit(1)
 
     gpu = get_gpu_status()
     ram = get_system_ram_info()
@@ -173,6 +204,15 @@ def up():
         boot_server(
             model_path=profile["model_path"], context_size=profile["context_size"]
         )
+
+        # ---------------------------------------------------------
+        # NEW: The "Systems Online" Handshake
+        # ---------------------------------------------------------
+        print("\n[+] Triggering systems check...")
+        ask_server(
+            "You are HyprTwin. You just woke up from sleep successfully. Say a very short, cool 'system online' greeting to the user.",
+            quick=True,
+        )
     else:
         print(
             "❌ ERROR: VRAM too low for cached profile. Close some apps or run 'twin build'."
@@ -189,52 +229,32 @@ def down():
 @app.command()
 def ask(
     query: Optional[List[str]] = typer.Argument(
-        None, help="The question you want to ask the agent."
+        None, help="The question you want to ask."
     ),
-    quick: bool = typer.Option(
-        False, "--quick", "-q", help="Bypass memory. Stateless, fast response."
-    ),
-    clear: bool = typer.Option(
-        False, "--clear", "-c", help="Wipes the agent's short-term memory."
-    ),
+    quick: bool = typer.Option(False, "--quick", "-q", help="Stateless response."),
+    clear: bool = typer.Option(False, "--clear", "-c", help="Wipe memory."),
 ):
-    """Talk to the agent. Supports terminal piping (e.g., ls | twin ask explain this)."""
+    """Talk to the agent. Supports terminal piping."""
     if clear:
         clear_history()
-        print("[+] Short-term memory wiped cleanly.")
+        print("[+] Short-term memory wiped.")
         if not query:
             return
 
     query_str = " ".join(query) if query else ""
 
+    # 1. Capture and Truncate Piped Data
     piped_data = None
     if not sys.stdin.isatty():
-        max_bytes = 2097152  # 2MB limit
-        try:
-            # Read pure raw bytes from the buffer so Python doesn't implicitly crash
-            raw_data = sys.stdin.buffer.read(max_bytes)
-
-            # Safely decode, replacing non-text binary bytes with ''
-            piped_data = raw_data.decode("utf-8", errors="replace").strip()
-
-            # Check if there is more data remaining in the buffer
-            if sys.stdin.buffer.read(1):
-                print(
-                    "[!] Warning: Piped input exceeded 2MB limit. Truncating safely to protect system memory.\n"
-                )
-
-        except AttributeError:
-            # Fallback just in case sys.stdin doesn't have a buffer (rare environments)
-            piped_data = sys.stdin.read(max_bytes).strip()
-            if sys.stdin.read(1):
-                print(
-                    "[!] Warning: Piped input exceeded 2MB limit. Truncating safely.\n"
-                )
+        piped_data = (
+            sys.stdin.buffer.read(2097152).decode("utf-8", errors="replace").strip()
+        )
 
     if not query_str and not piped_data:
-        print("[-] Error: You must provide a question or pipe data into the command.")
+        print("[-] Error: You must provide a question or pipe data.")
         raise typer.Exit(1)
 
+    # 2. Call the server with the new context-aware client
     ask_server(query_str, piped_context=piped_data, quick=quick)
 
 

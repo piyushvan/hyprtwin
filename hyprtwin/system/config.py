@@ -2,50 +2,68 @@ import json
 import os
 from pathlib import Path
 
-CONFIG_DIR = Path("~/.config/twin/").expanduser()
+# Centralized Path Definitions
+BASE_DIR = Path("~/.local/share/twin").expanduser()
+DB_PATH = str(BASE_DIR / "history.db")
+PROFILE_PATH = str(BASE_DIR / "profile.json")
+CONFIG_DIR = Path("~/.config/twin").expanduser()
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
 
+def get_common_paths():
+    """Returns a list of common locations where users install llama.cpp and models."""
+    home = Path.home()
+    return [
+        home / "models",
+        home / "llama.cpp",
+        home / "llama.cpp/build/bin",
+        home / ".local/bin",
+        home / "Downloads",
+    ]
+
+
+def auto_discover(subdir=""):
+    """Scans common paths for directories that exist."""
+    potential = get_common_paths()
+    found = []
+    for p in potential:
+        target = p / subdir if subdir else p
+        if target.exists():
+            found.append(str(target))
+    return found
+
+
 def get_config():
-    """Load config or return defaults if it doesn't exist."""
+    """Loads user configuration or returns defaults."""
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     if not CONFIG_FILE.exists():
-        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        default = {
-            "bin_path": "",  # User will set this
-            "model_paths": [str(Path("~/.local/share/twin/models").expanduser())],
-            "flags": {"ngl": 99, "turbo_quant": True, "port": 8080},
+        # Default configuration
+        default_config = {
+            "bin_path": "",
+            "model_paths": [str(Path("~/models").expanduser())],
         }
-        save_config(default)
-        return default
+        save_config(default_config)
+        return default_config
 
     with open(CONFIG_FILE, "r") as f:
         return json.load(f)
 
 
-def save_config(data):
+def save_config(config):
+    """Saves the current configuration."""
     with open(CONFIG_FILE, "w") as f:
-        json.dump(data, f, indent=4)
+        json.dump(config, f, indent=4)
 
 
-def get_binary_path(binary_name="llama-server"):
+def get_binary_path(binary_name: str) -> str:
+    """Helper to find llama.cpp binaries based on user config."""
     config = get_config()
-    bin_path_str = config.get("bin_path", "").strip()
+    bin_path = Path(config.get("bin_path", "")).expanduser()
+    full_path = bin_path / binary_name
 
-    if bin_path_str:
-        # Expand '~' and get absolute path
-        p = Path(bin_path_str).expanduser().resolve()
+    if not full_path.exists():
+        print(f"[-] Error: Could not find {binary_name} at {full_path}")
+        print("[!] Please run 'twin init' to reconfigure your paths.")
+        sys.exit(1)
 
-        # Scenario A: User pointed directly to the binary file
-        if p.is_file() and p.name in ["llama-server", "server"]:
-            return str(p)
-
-        # Scenario B: User pointed to the folder
-        if p.is_dir():
-            for name in ["llama-server", "server"]:
-                target = p / name
-                if target.exists() and target.is_file():
-                    return str(target)
-
-        print(f"⚠️  Warning: Could not resolve llama-server in {bin_path_str}")
-
-    return binary_name
+    return str(full_path)
