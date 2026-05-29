@@ -9,10 +9,16 @@ DB_PATH = os.path.expanduser("~/.local/share/twin/history.db")
 
 
 def init_db():
-    """Initializes the Tier 1 Memory Database."""
+    """Initializes the Tier 1 Memory Database with WAL concurrency."""
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
+
+    # Added a 10-second timeout so concurrent commands wait instead of crashing
+    conn = sqlite3.connect(DB_PATH, timeout=10.0)
     c = conn.cursor()
+
+    # FIX: Enable Write-Ahead Logging to prevent "database is locked" errors
+    c.execute("PRAGMA journal_mode=WAL;")
+
     c.execute("""CREATE TABLE IF NOT EXISTS messages
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, role TEXT, content TEXT)""")
     conn.commit()
@@ -81,6 +87,22 @@ def ask_server(query: str, piped_context: str = None, quick: bool = False):
     except requests.exceptions.ConnectionError:
         print(
             "[-] Error: The engine is cold. Run 'twin build' first to boot the server."
+        )
+        sys.exit(1)
+    except requests.exceptions.HTTPError as e:
+        print(
+            f"\n[-] Error: The AI engine rejected the request (HTTP {response.status_code})."
+        )
+        try:
+            # Try to grab the exact error reason from the llama.cpp server
+            error_data = response.json()
+            print(
+                f"[*] Server Response: {error_data.get('error', {}).get('message', response.text)}"
+            )
+        except Exception:
+            pass
+        print(
+            "[!] Hint: Your piped file or memory history exceeds the loaded Context Window."
         )
         sys.exit(1)
 

@@ -210,7 +210,27 @@ def ask(
 
     piped_data = None
     if not sys.stdin.isatty():
-        piped_data = sys.stdin.read().strip()
+        max_bytes = 2097152  # 2MB limit
+        try:
+            # Read pure raw bytes from the buffer so Python doesn't implicitly crash
+            raw_data = sys.stdin.buffer.read(max_bytes)
+
+            # Safely decode, replacing non-text binary bytes with ''
+            piped_data = raw_data.decode("utf-8", errors="replace").strip()
+
+            # Check if there is more data remaining in the buffer
+            if sys.stdin.buffer.read(1):
+                print(
+                    "[!] Warning: Piped input exceeded 2MB limit. Truncating safely to protect system memory.\n"
+                )
+
+        except AttributeError:
+            # Fallback just in case sys.stdin doesn't have a buffer (rare environments)
+            piped_data = sys.stdin.read(max_bytes).strip()
+            if sys.stdin.read(1):
+                print(
+                    "[!] Warning: Piped input exceeded 2MB limit. Truncating safely.\n"
+                )
 
     if not query_str and not piped_data:
         print("[-] Error: You must provide a question or pipe data into the command.")
