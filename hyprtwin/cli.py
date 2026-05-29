@@ -91,8 +91,7 @@ def build():
     model_size_mb = selected_file.stat().st_size // (1024 * 1024)
 
     gpu = get_gpu_status()
-    safe_data = calculate_safe_context(model_size_mb)
-
+    safe_data = calculate_safe_context(str(selected_file.resolve()), model_size_mb)
     print("\n⚙️  HARDWARE GOVERNOR:")
     print(f"  [+] Free VRAM: {gpu['free_vram_mb']} MB")
     print(f"  [+] Model Footprint: {model_size_mb} MB")

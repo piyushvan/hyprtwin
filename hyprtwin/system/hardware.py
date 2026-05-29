@@ -2,6 +2,8 @@ import json
 import os
 import subprocess
 
+from gguf import GGUFReader
+
 
 def get_system_ram_info() -> dict:
     """Reads native Linux memory info to return total and available RAM in MB."""
@@ -81,19 +83,45 @@ def get_gpu_status() -> dict:
     return {"type": "CPU", "total_vram_mb": 0, "free_vram_mb": 0}
 
 
-def calculate_safe_context(model_size_mb: int) -> dict:
+def calculate_safe_context(model_path: str, model_size_mb: int) -> dict:
     gpu = get_gpu_status()
     ram = get_system_ram_info()
 
-    # Use GPU VRAM if available, otherwise fallback to System RAM
     if gpu["type"] in ["NVIDIA", "AMD"]:
         free_memory = gpu["free_vram_mb"]
     else:
         free_memory = ram["free_mb"]
 
-    headroom = free_memory - model_size_mb - 200  # 200MB safety buffer
+    headroom_mb = free_memory - model_size_mb - 200  # 200MB safety buffer
 
-    # Tokens = MiB / 0.008
-    max_tokens = int(headroom / 0.008) if headroom > 0 else 0
+    if headroom_mb <= 0:
+        return {"headroom_mb": 0, "max_tokens": 0}
 
-    return {"headroom_mb": max(0, headroom), "max_tokens": max(0, max_tokens)}
+    try:
+        # 🧠 DYNAMIC GGUF PARSING
+        reader = GGUFReader(model_path)
+
+        # Extract the model's specific architecture (e.g., 'llama', 'qwen2', 'phi3')
+        arch = reader.fields["general.architecture"].parts[-1].tobytes().decode()
+
+        # Dynamically pull the exact hardware constraints
+        n_layer = int(reader.fields[f"{arch}.block_count"].parts[-1][0])
+        n_head = int(reader.fields[f"{arch}.attention.head_count"].parts[-1][0])
+        n_head_kv = int(reader.fields[f"{arch}.attention.head_count_kv"].parts[-1][0])
+        n_embd = int(reader.fields[f"{arch}.embedding_length"].parts[-1][0])
+
+        # Head Dimension
+        d_head = n_embd / n_head
+
+        # ⚙️ TURBO-QUANT MATH
+        # turbo4 (Keys) = 0.5 bytes per parameter. turbo3 (Values) = 0.375 bytes per parameter.
+        bytes_per_token = n_layer * n_head_kv * d_head * (0.5 + 0.375)
+        mb_per_token = bytes_per_token / (1024 * 1024)
+
+        max_tokens = int(headroom_mb / mb_per_token)
+
+    except Exception as e:
+        # Failsafe fallback just in case the .gguf file is corrupted or weirdly formatted
+        max_tokens = int(headroom_mb / 0.008)
+
+    return {"headroom_mb": max(0, headroom_mb), "max_tokens": max(0, max_tokens)}

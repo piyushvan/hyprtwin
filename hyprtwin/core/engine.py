@@ -54,10 +54,14 @@ def boot_server(model_path: str, context_size: int):
         "-c",
         str(context_size),
         "-ngl",
-        "99",
+        "99",  # Offload everything to GPU
         "-b",
-        "512",  # Restricts compute buffer
+        "512",  # Logical compute buffer
+        "-ub",
+        "512",  # Physical compute buffer
+        "--mlock",  # Lock memory to prevent SSD swapping
         "--flash-attn",
+        "on",
         "--cache-type-k",
         "turbo4",
         "--cache-type-v",
