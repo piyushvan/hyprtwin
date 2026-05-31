@@ -7,11 +7,14 @@ name = "hyprtwin"
 version = "3.0.0"
 description = "A bare-metal, strictly 4GB VRAM-aware local AI OS agent."
 requires-python = ">=3.10"
+# In pyproject.toml
 dependencies = [
     "typer>=0.9.0",
     "rich>=13.0.0",
     "requests>=2.31.0",
-    "questionary>=2.0.0"
+    "questionary>=2.0.0",
+    "pydantic>=2.0.0", # ADD THIS
+    "gguf"
 ]
 
 [project.scripts]

@@ -36,10 +36,11 @@ def init():
         choices=potential_bins + ["Manual Entry"],
     ).ask()
 
-    if bin_choice == "Manual Entry":
-        bin_path = questionary.path("Enter binary path:").ask()
-    else:
-        bin_path = bin_choice
+    bin_path = (
+        questionary.path("Enter binary path:").ask()
+        if bin_choice == "Manual Entry"
+        else bin_choice
+    )
 
     # 2. Discover Models
     potential_models = auto_discover()
@@ -48,14 +49,15 @@ def init():
         choices=potential_models + ["Manual Entry"],
     ).ask()
 
-    if model_choice == "Manual Entry":
-        model_path = questionary.path("Enter model path:").ask()
-    else:
-        model_path = model_choice
+    model_path = (
+        questionary.path("Enter model path:").ask()
+        if model_choice == "Manual Entry"
+        else model_choice
+    )
 
     # 3. Save
-    config["bin_path"] = str(Path(bin_path).resolve())
-    config["model_paths"] = [str(Path(model_path).resolve())]
+    config.bin_path = str(Path(bin_path).resolve())
+    config.model_paths = [str(Path(model_path).resolve())]
     save_config(config)
 
     print("\n✅ Setup complete. Paths validated.")
@@ -64,7 +66,7 @@ def init():
 @app.command()
 def scan():
     """Run a bare-metal telemetry scan (Shows real-time VRAM, CPU)."""
-    print("=== 🚀 HYPRTWIN V3.1: BARE-METAL TELEMETRY ===")
+    print("=== 🚀 HYPRTWIN V3.2: BARE-METAL TELEMETRY ===")  # version bump
     print(f"[+] CPU Model: {get_cpu_model()}")
     ram = get_system_ram_info()
     print(f"[+] System RAM (Total): {ram['total_mb']} MB")
@@ -80,7 +82,8 @@ def scan():
 def build():
     """Profiles hardware, builds the agent, and caches the safe profile."""
     config = get_config()
-    model_paths = config.get("model_paths", [])
+
+    model_paths = config.model_paths
 
     # 1. Find all .gguf files
     gguf_files = []
@@ -140,7 +143,6 @@ def build():
     ).ask()
 
     if confirm:
-        # Save the successful profile (FIXED DICTIONARY)
         profile_data = {
             "model_name": selected_file.name,
             "model_path": str(selected_file.resolve()),
@@ -151,20 +153,18 @@ def build():
         with open(PROFILE_FILE, "w") as f:
             json.dump(profile_data, f, indent=4)
 
-            kill_server()
-            boot_server(
-                model_path=profile_data["model_path"],
-                context_size=profile_data["context_size"],
-            )
+        kill_server()
+        boot_server(
+            model_path=profile_data["model_path"],
+            context_size=profile_data["context_size"],
+        )
 
-            # ---------------------------------------------------------
-            # NEW: The "Systems Online" Handshake
-            # ---------------------------------------------------------
-            print("\n[+] Triggering systems check...")
-            ask_server(
-                "You are HyprTwin. You just booted into bare-metal memory successfully. Say a very short, cool 'system online' greeting to the user.",
-                quick=True,
-            )
+        # Systems Online Handshake
+        print("\n[+] Triggering systems check...")
+        ask_server(
+            "You are HyprTwin. You just booted into bare-metal memory successfully. Say a very short, cool 'system online' greeting to the user.",
+            quick=True,
+        )
 
 
 @app.command()
@@ -180,7 +180,6 @@ def up():
         with open(PROFILE_FILE, "r") as f:
             profile = json.load(f)
     except json.JSONDecodeError:
-        # FIX: Gracefully handle corrupted config files
         print("❌ ERROR: Hardware profile is corrupted or unreadable.")
         print("[!] Please run 'twin build' to generate a fresh, safe profile.")
         raise typer.Exit(1)
@@ -205,9 +204,6 @@ def up():
             model_path=profile["model_path"], context_size=profile["context_size"]
         )
 
-        # ---------------------------------------------------------
-        # NEW: The "Systems Online" Handshake
-        # ---------------------------------------------------------
         print("\n[+] Triggering systems check...")
         ask_server(
             "You are HyprTwin. You just woke up from sleep successfully. Say a very short, cool 'system online' greeting to the user.",
@@ -243,18 +239,27 @@ def ask(
 
     query_str = " ".join(query) if query else ""
 
-    # 1. Capture and Truncate Piped Data
+    # IMPROVED: Streaming read from stdin with 2MB cap (line-by-line)
     piped_data = None
     if not sys.stdin.isatty():
-        piped_data = (
-            sys.stdin.buffer.read(2097152).decode("utf-8", errors="replace").strip()
-        )
+        max_bytes = 2 * 1024 * 1024  # 2 MB
+        chunks = []
+        total = 0
+        for line in sys.stdin.buffer:
+            chunk = line
+            if total + len(chunk) > max_bytes:
+                # Truncate and stop reading
+                remaining = max_bytes - total
+                chunks.append(chunk[:remaining])
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+        piped_data = b"".join(chunks).decode("utf-8", errors="replace").strip()
 
     if not query_str and not piped_data:
         print("[-] Error: You must provide a question or pipe data.")
         raise typer.Exit(1)
 
-    # 2. Call the server with the new context-aware client
     ask_server(query_str, piped_context=piped_data, quick=quick)
 
 

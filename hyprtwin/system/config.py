@@ -1,6 +1,11 @@
 import json
-import os
+import logging
+import sys
+from functools import lru_cache  # NEW
 from pathlib import Path
+from typing import List
+
+from pydantic import BaseModel, ValidationError
 
 # Centralized Path Definitions
 BASE_DIR = Path("~/.local/share/twin").expanduser()
@@ -8,6 +13,14 @@ DB_PATH = str(BASE_DIR / "history.db")
 PROFILE_PATH = str(BASE_DIR / "profile.json")
 CONFIG_DIR = Path("~/.config/twin").expanduser()
 CONFIG_FILE = CONFIG_DIR / "config.json"
+
+# Configure Logging
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+
+
+class HyprTwinConfig(BaseModel):
+    bin_path: str = ""
+    model_paths: List[str] = [str(Path("~/models").expanduser())]
 
 
 def get_common_paths():
@@ -22,8 +35,10 @@ def get_common_paths():
     ]
 
 
+# NEW: Cache auto_discover results to avoid repeated filesystem scans
+@lru_cache(maxsize=1)
 def auto_discover(subdir=""):
-    """Scans common paths for directories that exist."""
+    """Scans common paths for directories that exist. Results cached."""
     potential = get_common_paths()
     found = []
     for p in potential:
@@ -33,32 +48,37 @@ def auto_discover(subdir=""):
     return found
 
 
-def get_config():
-    """Loads user configuration or returns defaults."""
+def get_config() -> HyprTwinConfig:
+    """Loads and validates configuration using Pydantic V2."""
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+
     if not CONFIG_FILE.exists():
-        # Default configuration
-        default_config = {
-            "bin_path": "",
-            "model_paths": [str(Path("~/models").expanduser())],
-        }
-        save_config(default_config)
-        return default_config
+        default = HyprTwinConfig()
+        save_config(default)
+        return default
 
-    with open(CONFIG_FILE, "r") as f:
-        return json.load(f)
+    try:
+        with open(CONFIG_FILE, "r") as f:
+            data = json.load(f)
+            # Pydantic V2 uses model_validate
+            return HyprTwinConfig.model_validate(data)
+    except (ValidationError, json.JSONDecodeError, TypeError) as e:
+        logging.error(f"Config corruption detected: {e}. Resetting to defaults.")
+        default = HyprTwinConfig()
+        save_config(default)
+        return default
 
 
-def save_config(config):
-    """Saves the current configuration."""
+def save_config(config: HyprTwinConfig):
+    """Saves the current configuration using V2's model_dump."""
     with open(CONFIG_FILE, "w") as f:
-        json.dump(config, f, indent=4)
+        json.dump(config.model_dump(), f, indent=4)
 
 
 def get_binary_path(binary_name: str) -> str:
     """Helper to find llama.cpp binaries based on user config."""
     config = get_config()
-    bin_path = Path(config.get("bin_path", "")).expanduser()
+    bin_path = Path(config.bin_path).expanduser()
     full_path = bin_path / binary_name
 
     if not full_path.exists():
