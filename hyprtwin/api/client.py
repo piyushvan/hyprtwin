@@ -1,11 +1,13 @@
+import http.client
 import json
 import os
+import socket as sock
 import sqlite3
 import sys
 
-import requests
-
 DB_PATH = os.path.expanduser("~/.local/share/twin/history.db")
+SOCKET_PATH = "/tmp/hyprtwin.sock"
+MAX_HISTORY_ROWS = 100
 
 
 def init_db():
@@ -37,10 +39,17 @@ def get_history(limit=6):
 
 
 def save_message(role, content):
-    """Saves a message to the memory database."""
+    """Saves a message to the memory database and prunes old rows."""
     conn = init_db()
     c = conn.cursor()
     c.execute("INSERT INTO messages (role, content) VALUES (?, ?)", (role, content))
+
+    # Prune: keep only the most recent MAX_HISTORY_ROWS rows
+    c.execute(
+        "DELETE FROM messages WHERE id NOT IN "
+        "(SELECT id FROM messages ORDER BY id DESC LIMIT ?)",
+        (MAX_HISTORY_ROWS,),
+    )
     conn.commit()
     conn.close()
 
@@ -52,6 +61,23 @@ def clear_history():
     c.execute("DELETE FROM messages")
     conn.commit()
     conn.close()
+
+
+def _unix_request(method: str, path: str, body: bytes = None, stream: bool = False):
+    """Sends an HTTP request through the Unix domain socket.
+
+    Returns an http.client.HTTPResponse that can be iterated for streaming.
+    """
+    s = sock.socket(sock.AF_UNIX, sock.SOCK_STREAM)
+    s.settimeout(300)  # 5-minute timeout for long generations
+    s.connect(SOCKET_PATH)
+
+    conn = http.client.HTTPConnection("localhost")
+    conn.sock = s
+
+    headers = {"Content-Type": "application/json"} if body else {}
+    conn.request(method, path, body=body, headers=headers)
+    return conn, conn.getresponse()
 
 
 def ask_server(query: str, piped_context: str = None, quick: bool = False):
@@ -79,25 +105,26 @@ def ask_server(query: str, piped_context: str = None, quick: bool = False):
         "stream": True,  # We are streaming the output to feel instantaneous!
     }
 
+    payload_bytes = json.dumps(payload).encode("utf-8")
+
     try:
-        response = requests.post(
-            "http://127.0.0.1:8080/v1/chat/completions", json=payload, stream=True
+        conn, response = _unix_request(
+            "POST", "/v1/chat/completions", body=payload_bytes, stream=True
         )
-        response.raise_for_status()
-    except requests.exceptions.ConnectionError:
+    except (ConnectionRefusedError, FileNotFoundError, OSError):
         print(
             "[-] Error: The engine is cold. Run 'twin build' first to boot the server."
         )
         sys.exit(1)
-    except requests.exceptions.HTTPError as e:
+
+    if response.status >= 400:
         print(
-            f"\n[-] Error: The AI engine rejected the request (HTTP {response.status_code})."
+            f"\n[-] Error: The AI engine rejected the request (HTTP {response.status})."
         )
         try:
-            # Try to grab the exact error reason from the llama.cpp server
-            error_data = response.json()
+            error_data = json.loads(response.read().decode("utf-8"))
             print(
-                f"[*] Server Response: {error_data.get('error', {}).get('message', response.text)}"
+                f"[*] Server Response: {error_data.get('error', {}).get('message', '')}"
             )
         except Exception:
             pass
@@ -108,24 +135,59 @@ def ask_server(query: str, piped_context: str = None, quick: bool = False):
 
     print("\n🤖 Twin: ", end="", flush=True)
     full_response = ""
+    is_thinking = False
 
-    # Beautiful streaming logic
-    for line in response.iter_lines():
-        if line:
-            decoded = line.decode("utf-8")
-            if decoded.startswith("data: ") and decoded != "data: [DONE]":
-                try:
-                    chunk = json.loads(decoded[6:])
-                    content = chunk["choices"][0]["delta"].get("content")
+    # Beautiful streaming logic — read line by line from raw HTTP response
+    buffer = b""
+    while True:
+        chunk = response.read(1)
+        if not chunk:
+            break
+        buffer += chunk
+        if chunk == b"\n":
+            line = buffer.strip()
+            buffer = b""
+            if line:
+                decoded = line.decode("utf-8")
+                if decoded.startswith("data: ") and decoded != "data: [DONE]":
+                    try:
+                        data = json.loads(decoded[6:])
+                        # Defensively check if 'choices' exists
+                        choices = data.get("choices", [])
+                        if not choices:
+                            continue  # Skip telemetry/eval chunks
 
-                    # The Fix: Ensure content actually exists and isn't 'None'
-                    if content is not None:
-                        print(content, end="", flush=True)
-                        full_response += content
-                except json.JSONDecodeError:
-                    pass
+                        delta = choices[0].get("delta", {})
+                        content = delta.get("content")
+
+                        # Ensure content actually exists and isn't 'None'
+                        if content is not None:
+                            # Detect start of thought process
+                            if "<think>" in content:
+                                is_thinking = True
+                                content = content.replace("<think>", "")
+                                
+                            # Detect end of thought process
+                            if "</think>" in content:
+                                is_thinking = False
+                                content = content.replace("</think>", "")
+                                
+                            # Only print to terminal if it's NOT thinking
+                            if not is_thinking and content.strip() != "":
+                                print(content, end="", flush=True)
+                                
+                            full_response += content
+                    except Exception:
+                        pass
     print("\n")
 
+    # Close the underlying socket connection
+    try:
+        conn.close()
+    except Exception:
+        pass
+
     if not quick:
-        save_message("user", full_prompt)
+        # ONLY save the user's actual question, NOT the giant piped_context!
+        save_message("user", query)
         save_message("assistant", full_response)

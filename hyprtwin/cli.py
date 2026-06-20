@@ -77,7 +77,11 @@ def scan():
 
 
 @app.command()
-def build():
+def build(
+    debug: bool = typer.Option(
+        False, "--debug", help="Enable llama-server debug logging."
+    ),
+):
     """Profiles hardware, builds the agent, and caches the safe profile."""
     config = get_config()
     model_paths = config.get("model_paths", [])
@@ -87,7 +91,7 @@ def build():
     for d in model_paths:
         p = Path(d).expanduser()
         if p.exists() and p.is_dir():
-            gguf_files.extend(list(p.glob("*.gguf")))
+            gguf_files.extend(list(p.rglob("*.gguf")))
 
     if not gguf_files:
         print("[!] No .gguf models found in your configured paths.")
@@ -155,6 +159,7 @@ def build():
             boot_server(
                 model_path=profile_data["model_path"],
                 context_size=profile_data["context_size"],
+                debug=debug,
             )
 
             # ---------------------------------------------------------
@@ -168,7 +173,11 @@ def build():
 
 
 @app.command()
-def up():
+def up(
+    debug: bool = typer.Option(
+        False, "--debug", help="Enable llama-server debug logging."
+    ),
+):
     """Fast-boots the server using the last known safe hardware profile."""
     if not PROFILE_FILE.exists():
         print(
@@ -202,7 +211,9 @@ def up():
         print("[+] VRAM check passed. Bypassing menus...")
         kill_server()
         boot_server(
-            model_path=profile["model_path"], context_size=profile["context_size"]
+            model_path=profile["model_path"],
+            context_size=profile["context_size"],
+            debug=debug,
         )
 
         # ---------------------------------------------------------
@@ -243,12 +254,21 @@ def ask(
 
     query_str = " ".join(query) if query else ""
 
-    # 1. Capture and Truncate Piped Data
+    # 1. Capture and Truncate Piped Data (line-safe, no mid-UTF8 splits)
     piped_data = None
+    MAX_PIPED_CHARS = 500_000  # ~500KB of text, safe for most context windows
     if not sys.stdin.isatty():
-        piped_data = (
-            sys.stdin.buffer.read(2097152).decode("utf-8", errors="replace").strip()
-        )
+        lines = []
+        total_chars = 0
+        for raw_line in sys.stdin:
+            total_chars += len(raw_line)
+            if total_chars > MAX_PIPED_CHARS:
+                print(
+                    "[!] Warning: Piped input truncated to ~500K chars to fit context window."
+                )
+                break
+            lines.append(raw_line)
+        piped_data = "".join(lines).strip() if lines else None
 
     if not query_str and not piped_data:
         print("[-] Error: You must provide a question or pipe data.")

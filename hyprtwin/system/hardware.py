@@ -4,6 +4,18 @@ import subprocess
 
 from gguf import GGUFReader
 
+# --- Improvement 6: Dynamic CPU Thread Limiting ---
+
+
+def get_safe_thread_count() -> int:
+    """Returns a safe thread count for llama-server, leaving cores for the OS.
+
+    Subtracts 2 cores from the total to prevent CPU pegging and thermal
+    throttling on low-core laptops. Minimum of 1 thread.
+    """
+    total = os.cpu_count() or 2
+    return max(1, total - 2)
+
 
 def get_system_ram_info() -> dict:
     """Reads native Linux memory info to return total and available RAM in MB."""
@@ -46,7 +58,8 @@ def get_gpu_status() -> dict:
             ],
             text=True,
         )
-        total, free = map(int, result.strip().split(","))
+        primary_gpu_string = result.strip().split("\n")[0]
+        total, free = map(int, primary_gpu_string.split(","))
         return {"type": "NVIDIA", "total_vram_mb": total, "free_vram_mb": free}
     except (subprocess.CalledProcessError, FileNotFoundError):
         pass
@@ -99,6 +112,7 @@ def calculate_safe_context(model_path: str, model_size_mb: int) -> dict:
 
     try:
         # 🧠 DYNAMIC GGUF PARSING
+
         reader = GGUFReader(model_path)
 
         # Extract the model's specific architecture (e.g., 'llama', 'qwen2', 'phi3')
