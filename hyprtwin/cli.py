@@ -254,24 +254,20 @@ def ask(
 
     query_str = " ".join(query) if query else ""
 
-    # 1. Capture and Truncate Piped Data (line-safe, no mid-UTF8 splits)
+    # 1. Capture and Truncate Piped Data dynamically
     piped_data = None
-    MAX_PIPED_CHARS = 500_000  # ~500KB of text, safe for most context windows
     if not sys.stdin.isatty():
-        piped_data = sys.stdin.read(MAX_PIPED_CHARS)
-        if len(piped_data) == MAX_PIPED_CHARS:
-            print("[!] Warning: Piped input truncated.")
+        from hyprtwin.api.client import _get_context_budget
+        budget = _get_context_budget()
+        max_pipe_chars = budget.get("pipe_budget", 100000)
 
-        total_chars = 0
-        for raw_line in sys.stdin:
-            total_chars += len(raw_line)
-            if total_chars > MAX_PIPED_CHARS:
-                print(
-                    "[!] Warning: Piped input truncated to ~500K chars to fit context window."
-                )
-                break
-            lines.append(raw_line)
-        piped_data = "".join(lines).strip() if lines else None
+        # Read exactly up to the budget
+        piped_data = sys.stdin.read(max_pipe_chars)
+        
+        # If there's still a single byte left, we know we truncated it
+        if sys.stdin.read(1):
+            print(f"[!] Warning: Piped data exceeded hardware limits.")
+            print(f"[*] Truncated to {max_pipe_chars} characters to prevent crash.")
 
     if not query_str and not piped_data:
         print("[-] Error: You must provide a question or pipe data.")

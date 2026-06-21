@@ -40,25 +40,39 @@ def _get_context_budget() -> dict:
         context_size = 4096
 
     safe_prompt_tokens = context_size - 1024
-    max_total_characters = max(1000, safe_prompt_tokens * 4)
+    max_total_chars = max(1000, safe_prompt_tokens * 4) # Renamed to max_total_chars
 
     return {
         "max_tokens": context_size,
-        "max_charcater": max_total_charcate,
-        "pipe_budget": int(max_total_charcate * 0.7),
-        "history_budget": int(max_total_charcate * 0.3),
+        "max_chars": max_total_chars,
+        "pipe_budget": int(max_total_chars * 0.7),
+        "history_budget": int(max_total_chars * 0.3),
     }
 
 
-def get_history(char):
-    """Retrieves the last 6 messages to inject as context."""
+def get_history(char_budget: int = 4000):
+    """Retrieves history, dropping old messages if they exceed the memory budget."""
     conn = init_db()
     c = conn.cursor()
-    c.execute("SELECT role, content FROM messages ORDER BY id DESC LIMIT ?", (limit,))
+    # Pull the last 20 messages to evaluate
+    c.execute("SELECT role, content FROM messages ORDER BY id DESC LIMIT 20")
     rows = c.fetchall()
     conn.close()
+    
+    history = []
+    current_chars = 0
+    
+    # Iterate backwards (newest to oldest)
+    for role, content in rows:
+        msg_len = len(content)
+        if current_chars + msg_len > char_budget:
+            break # The Sliding Window drops everything older than this
+            
+        history.append({"role": role, "content": content})
+        current_chars += msg_len
+
     # Reverse to restore chronological order
-    return [{"role": r[0], "content": r[1]} for r in reversed(rows)]
+    return [{"role": r["role"], "content": r["content"]} for r in reversed(history)]
 
 
 def save_message(role, content):
@@ -116,8 +130,11 @@ def ask_server(query: str, piped_context: str = None, quick: bool = False):
         }
     ]
 
+    budget = _get_context_budget() # Get the math
+
     if not quick:
-        history = get_history()
+        # Pass the budget to the history!
+        history = get_history(char_budget=budget["history_budget"]) 
         messages.extend(history)
 
     messages.append({"role": "user", "content": full_prompt})
