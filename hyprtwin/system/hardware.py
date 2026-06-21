@@ -2,8 +2,6 @@ import json
 import os
 import subprocess
 
-from gguf import GGUFReader
-
 # --- Improvement 6: Dynamic CPU Thread Limiting ---
 
 
@@ -112,6 +110,7 @@ def calculate_safe_context(model_path: str, model_size_mb: int) -> dict:
 
     try:
         # 🧠 DYNAMIC GGUF PARSING
+        from gguf import GGUFReader
 
         reader = GGUFReader(model_path)
 

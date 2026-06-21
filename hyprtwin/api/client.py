@@ -1,9 +1,12 @@
 import http.client
 import json
 import os
+import profile
 import socket as sock
 import sqlite3
 import sys
+from json.decoder import JSONDecodeError
+from multiprocessing import context
 
 DB_PATH = os.path.expanduser("~/.local/share/twin/history.db")
 SOCKET_PATH = "/tmp/hyprtwin.sock"
@@ -27,7 +30,27 @@ def init_db():
     return conn
 
 
-def get_history(limit=6):
+def _get_context_budget() -> dict:
+    profile_path = os.path.expanduser("~/.local/share/twin/profile.json")
+    try:
+        with open(profile_path, "r") as f:
+            profile = json.load(f)
+            context_size = profile.get("context_size", 4096)
+    except (FileNotFoundError, json.JSONDecodeError):
+        context_size = 4096
+
+    safe_prompt_tokens = context_size - 1024
+    max_total_characters = max(1000, safe_prompt_tokens * 4)
+
+    return {
+        "max_tokens": context_size,
+        "max_charcater": max_total_charcate,
+        "pipe_budget": int(max_total_charcate * 0.7),
+        "history_budget": int(max_total_charcate * 0.3),
+    }
+
+
+def get_history(char):
     """Retrieves the last 6 messages to inject as context."""
     conn = init_db()
     c = conn.cursor()
@@ -140,7 +163,7 @@ def ask_server(query: str, piped_context: str = None, quick: bool = False):
     # Beautiful streaming logic — read line by line from raw HTTP response
     buffer = b""
     while True:
-        chunk = response.read(1)
+        chunk = response.readline()
         if not chunk:
             break
         buffer += chunk
@@ -166,16 +189,16 @@ def ask_server(query: str, piped_context: str = None, quick: bool = False):
                             if "<think>" in content:
                                 is_thinking = True
                                 content = content.replace("<think>", "")
-                                
+
                             # Detect end of thought process
                             if "</think>" in content:
                                 is_thinking = False
                                 content = content.replace("</think>", "")
-                                
+
                             # Only print to terminal if it's NOT thinking
                             if not is_thinking and content.strip() != "":
                                 print(content, end="", flush=True)
-                                
+
                             full_response += content
                     except Exception:
                         pass

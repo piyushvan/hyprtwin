@@ -258,7 +258,10 @@ def ask(
     piped_data = None
     MAX_PIPED_CHARS = 500_000  # ~500KB of text, safe for most context windows
     if not sys.stdin.isatty():
-        lines = []
+        piped_data = sys.stdin.read(MAX_PIPED_CHARS)
+        if len(piped_data) == MAX_PIPED_CHARS:
+            print("[!] Warning: Piped input truncated.")
+
         total_chars = 0
         for raw_line in sys.stdin:
             total_chars += len(raw_line)

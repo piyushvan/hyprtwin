@@ -50,8 +50,8 @@ def _wait_for_server(timeout: int = 60):
 
     Checks every 200ms. Fails hard after `timeout` seconds with a clear message.
     """
-    import socket as sock
     import http.client
+    import socket as sock
 
     deadline = time.monotonic() + timeout
     attempt = 0
@@ -174,6 +174,12 @@ def kill_server():
             # Get the process group ID and kill the entire tree
             pgid = os.getpgid(pid)
             os.killpg(pgid, signal.SIGTERM)
+            time.sleep(4)
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except OSError:
+                pass
+
             print(
                 f"[+] Successfully assassinated llama-server group (PID: {pid}). VRAM freed."
             )
